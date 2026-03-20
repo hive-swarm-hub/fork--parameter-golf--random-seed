@@ -12,3 +12,11 @@ c6ab9a8	1.159894	15743946	keep	10L MLP=1392 + grad clip 0.3 (valid, tied best)
 01d5684	1.151495	15632742	keep	PR#162 full stack bigram=2048
 1a4f961	1.147618	15900590	keep	PR#162 full stack bigram=4096
 b77e9a0	1.147454	15744128	keep	+eval fix+int6 bigram+pruning (NEW BEST!)
+ef7f20e	1.147500	15584140	keep	PR#162+compression fixes
+5d70a72	1.147400	15584876	keep	warmdown=4000+SWA100+prune4%
+1e71c7b	1.147400	15584704	keep	Tuned WD+SWA+6bit pack
+dc73f46	1.145800	15181748	keep	10L+int5 MLP+int6 attn+tuned WD/SWA
+fe1d048	1.145300	15220111	keep	seed=42+3% prune (TIED #1!)
+79fe07f	1.147606	15220111	discard	seed=2024 (worse than seed=42)
+0924202	1.617493	12867311	discard	model_dim=528 (too slow, only 4768 steps)
+8f35fb6	1.145186	15520887	keep	10L+int5MLP+WD=0.04global+warmdown=3000 (NEW #1!)

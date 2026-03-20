@@ -43,7 +43,7 @@ class Hyperparameters:
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
     tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
-    seed = int(os.environ.get("SEED", 1337))
+    seed = int(os.environ.get("SEED", 42))
 
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 500))
@@ -1164,7 +1164,7 @@ def main() -> None:
     with torch.no_grad():
         for name, param in base_model.named_parameters():
             if param.ndim == 2 and param.numel() > 65536:
-                threshold = torch.quantile(param.abs().float().flatten(), 0.04)
+                threshold = torch.quantile(param.abs().float().flatten(), 0.03)
                 mask = param.abs() < threshold
                 param.masked_fill_(mask, 0.0)
 

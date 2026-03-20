@@ -58,7 +58,7 @@ class Hyperparameters:
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 9))
+    num_layers = int(os.environ.get("NUM_LAYERS", 10))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -91,7 +91,7 @@ class Hyperparameters:
 
     swa_enabled = bool(int(os.environ.get("SWA_ENABLED", "1")))
     swa_start_frac = float(os.environ.get("SWA_START_FRAC", 0.5))
-    swa_every = int(os.environ.get("SWA_EVERY", 100))
+    swa_every = int(os.environ.get("SWA_EVERY", 50))
 
 # -----------------------------
 # MUON OPTIMIZER
@@ -331,17 +331,17 @@ def _classify_param(name: str) -> str:
         return "attn"
     return "other"
 
-def quantize_int6_per_row(t: Tensor) -> tuple[Tensor, Tensor]:
+def quantize_intN_per_row(t: Tensor, clip_range: int = 31) -> tuple[Tensor, Tensor]:
     t32 = t.float()
     if t32.ndim == 2:
         row_max = t32.abs().amax(dim=1)
-        scale = (row_max / 31.0).clamp_min(1e-12).to(torch.float16)
+        scale = (row_max / clip_range).clamp_min(1e-12).to(torch.float16)
         scale = scale.clamp_min(torch.finfo(torch.float16).tiny)
-        q = torch.clamp(torch.round(t32 / scale.float()[:, None]), -32, 31).to(torch.int8)
+        q = torch.clamp(torch.round(t32 / scale.float()[:, None]), -(clip_range+1), clip_range).to(torch.int8)
         return q, scale
     amax = t32.abs().max().item()
-    scale = torch.tensor(max(amax / 31.0, 1e-12), dtype=torch.float16)
-    q = torch.clamp(torch.round(t32 / scale.float()), -32, 31).to(torch.int8)
+    scale = torch.tensor(max(amax / clip_range, 1e-12), dtype=torch.float16)
+    q = torch.clamp(torch.round(t32 / scale.float()), -(clip_range+1), clip_range).to(torch.int8)
     return q, scale
 
 def mixed_quantize_int6(state_dict: dict[str, Tensor], int6_cats: set[str]):
@@ -363,10 +363,11 @@ def mixed_quantize_int6(state_dict: dict[str, Tensor], int6_cats: set[str]):
             meta[name] = "passthrough_fp16"
             continue
         if cat in int6_cats and t.ndim >= 1:
-            q, s = quantize_int6_per_row(t)
+            clip = 15 if cat == "mlp" else 31  # int5 for MLP, int6 for attention
+            q, s = quantize_intN_per_row(t, clip_range=clip)
             result[name + ".q"] = q
             result[name + ".scale"] = s
-            meta[name] = {"type": "int6"}
+            meta[name] = {"type": f"int{5 if cat == 'mlp' else 6}"}
         else:
             q, s = quantize_float_tensor(t)
             result[name + ".q"] = q
@@ -957,7 +958,7 @@ def main() -> None:
         lr=args.matrix_lr,
         momentum=args.muon_momentum,
         backend_steps=args.muon_backend_steps,
-        weight_decay=0.02,
+        weight_decay=0.04,
     )
     for group in optimizer_muon.param_groups:
         group["base_lr"] = args.matrix_lr

@@ -83,7 +83,7 @@ class Hyperparameters:
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.3))
     weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.04))
 
-    eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
+    eval_stride = int(os.environ.get("EVAL_STRIDE", 32))
     eval_batch_seqs = int(os.environ.get("EVAL_BATCH_SEQS", 32))
 
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 10240))

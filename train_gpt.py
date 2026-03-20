@@ -325,6 +325,8 @@ def _classify_param(name: str) -> str:
         return "embed"
     if ".mlp." in name:
         return "mlp"
+    if "bigram" in name:
+        return "bigram"
     if ".attn." in name or (".proj." in name and ".mlp." not in name):
         return "attn"
     return "other"
@@ -348,7 +350,7 @@ def mixed_quantize_int6(state_dict: dict[str, Tensor], int6_cats: set[str]):
     for name, tensor in state_dict.items():
         t = tensor.detach().cpu().contiguous()
         cat = _classify_param(name)
-        if not t.is_floating_point() or t.numel() <= 65536:
+        if not t.is_floating_point() or t.numel() <= 8192:
             result[name] = t.to(torch.float16) if t.is_floating_point() else t
             meta[name] = "passthrough"
             continue
@@ -749,7 +751,7 @@ def eval_val_sliding(
     seq_len = args.train_seq_len
     total_tokens = val_tokens.numel() - 1
     window_starts = [ws for ws in range(0, total_tokens, stride)
-                     if min(ws + seq_len, total_tokens) - ws >= 1]
+                     if min(ws + seq_len, total_tokens) - ws >= stride or ws == 0]
     total_windows = len(window_starts)
     my_s = (total_windows * rank) // world_size
     my_e = (total_windows * (rank + 1)) // world_size
@@ -1157,9 +1159,17 @@ def main() -> None:
         log0(f"Code size: {code_bytes} bytes")
         log0(f"Total submission size: {model_bytes + code_bytes} bytes")
 
+    # Magnitude pruning: zero out smallest weights to improve compression
+    with torch.no_grad():
+        for name, param in base_model.named_parameters():
+            if param.ndim == 2 and param.numel() > 65536:
+                threshold = torch.quantile(param.abs().float().flatten(), 0.02)
+                mask = param.abs() < threshold
+                param.masked_fill_(mask, 0.0)
+
     # INT6 mixed quantization + zstd/zlib export
     sd_cpu = {k: v.detach().cpu() for k, v in base_model.state_dict().items()}
-    quant_result, quant_meta = mixed_quantize_int6(sd_cpu, {"mlp", "attn"})
+    quant_result, quant_meta = mixed_quantize_int6(sd_cpu, {"mlp", "attn", "bigram"})
     quant_buf = io.BytesIO()
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()

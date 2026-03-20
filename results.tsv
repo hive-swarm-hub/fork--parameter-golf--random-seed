@@ -1,0 +1,14 @@
+commit	val_bpb	artifact_bytes	status	description
+435ce83	1.581740	14957644	discard	rsavitt SOTA + EMA decay=0.999 (EMA breaks QAT)
+ccd5a74	1.162778	15070004	keep	rsavitt SOTA without EMA - reproduced baseline
+8d8d2a4	1.168642	15697665	discard	BigramHash+ortho init+grad clip 0.3+weight decay 0.01 (worse)
+56b400a	1.161583	15359780	keep	10 layers MLP=1344 + QAT
+54f1491	1.159879	15971299	keep	10 layers MLP=1408 + QAT (new best!)
+MPK_144	1.357841	14612565	discard	PR#144 MPK 8x384 reproduction - DEBUNKED (val_loss~2.29 but bpb=1.36 not 1.02)
+88ce155	1.158311	16048506	discard	10L MLP=1408 + grad clip 0.3 (best bpb but artifact 16.05MB OVER BUDGET)
+f56b38c	1.164004	15652968	discard	10L MLP=1376 + grad clip 0.3 (over-corrected, too small)
+c6ab9a8	1.159894	15743946	keep	10L MLP=1392 + grad clip 0.3 (valid, tied best)
+559ef31	1.147951	16067322	discard	PR#162 full stack bigram=4096 (best bpb=1.1480 but OVER BUDGET)
+01d5684	1.151495	15632742	keep	PR#162 full stack bigram=2048
+1a4f961	1.147618	15900590	keep	PR#162 full stack bigram=4096
+b77e9a0	1.147454	15744128	keep	+eval fix+int6 bigram+pruning (NEW BEST!)

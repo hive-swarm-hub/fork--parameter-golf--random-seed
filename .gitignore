@@ -9,3 +9,6 @@ __pycache__/
 *.pt
 *.ptz
 logs/
+run_mpk.log
+*.backup
+run.log

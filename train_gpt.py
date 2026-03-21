@@ -1328,11 +1328,44 @@ def main() -> None:
         log0(f"Code size: {code_bytes} bytes")
         log0(f"Total submission size: {model_bytes + code_bytes} bytes")
 
-    # Magnitude pruning: zero out smallest weights to improve compression
+    # Adaptive magnitude pruning: binary search for pruning % that fits under 16MB
+    MAX_ARTIFACT = 16_000_000
+    best_prune_frac = 0.10
+    for prune_frac in [0.10, 0.12, 0.14, 0.16]:
+        # Apply pruning
+        pruned_sd = {}
+        with torch.no_grad():
+            for name, param in base_model.named_parameters():
+                p = param.detach().clone()
+                if p.ndim == 2 and p.numel() > 65536:
+                    threshold = torch.quantile(p.abs().float().flatten(), prune_frac)
+                    p.masked_fill_(p.abs() < threshold, 0.0)
+                pruned_sd[name] = p
+        # Trial quantize + compress to check size
+        trial_sd = {k: v.cpu() for k, v in base_model.state_dict().items()}
+        for k in pruned_sd:
+            trial_sd[k] = pruned_sd[k].cpu()
+        trial_qr, trial_qm = mixed_quantize_int6(trial_sd, {"mlp", "attn", "bigram"})
+        trial_buf = io.BytesIO()
+        torch.save({"w": trial_qr, "m": trial_qm}, trial_buf)
+        trial_raw = trial_buf.getvalue()
+        if _COMPRESSOR == "zstd":
+            trial_blob = zstandard.ZstdCompressor(level=22).compress(trial_raw)
+        else:
+            trial_blob = zlib.compress(trial_raw, 9)
+        trial_size = len(trial_blob) + len(code.encode("utf-8"))
+        log0(f"prune_trial:{prune_frac:.2f} artifact:{trial_size} {'VALID' if trial_size <= MAX_ARTIFACT else 'OVER'}")
+        if trial_size <= MAX_ARTIFACT:
+            best_prune_frac = prune_frac
+            break
+        best_prune_frac = prune_frac
+    log0(f"selected_prune_frac:{best_prune_frac}")
+
+    # Apply the selected pruning level
     with torch.no_grad():
         for name, param in base_model.named_parameters():
             if param.ndim == 2 and param.numel() > 65536:
-                threshold = torch.quantile(param.abs().float().flatten(), 0.10)
+                threshold = torch.quantile(param.abs().float().flatten(), best_prune_frac)
                 mask = param.abs() < threshold
                 param.masked_fill_(mask, 0.0)
 

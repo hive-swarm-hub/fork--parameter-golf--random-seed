@@ -49,7 +49,7 @@ class Hyperparameters:
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
     tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
-    seed = int(os.environ.get("SEED", 1337))
+    seed = int(os.environ.get("SEED", 42))
 
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 500))
@@ -380,11 +380,11 @@ def mixed_quantize_int6(state_dict: dict[str, Tensor], int6_cats: set[str]):
             meta[name] = "passthrough_fp16"
             continue
         if cat in int6_cats and t.ndim >= 1:
-            clip = 15 if cat in ("mlp", "bigram") else 31  # int5 for MLP+bigram, int6 for attn
+            clip = 15 if cat == "mlp" else 31  # int5 for MLP, int6 for attn/bigram
             q, s = quantize_intN_per_row(t, clip_range=clip)
             result[name + ".q"] = q
             result[name + ".scale"] = s
-            meta[name] = {"type": f"int{5 if cat in ('mlp', 'bigram') else 6}"}
+            meta[name] = {"type": f"int{5 if cat == 'mlp' else 6}"}
         else:
             q, s = quantize_float_tensor(t)
             result[name + ".q"] = q

@@ -653,7 +653,7 @@ class SmearGate(nn.Module):
 
 
 class BigramHashEmbedding(nn.Module):
-    """Hash consecutive token pairs into a learned embedding table."""
+    """Multi-gram hash: unigram + bigram + trigram from same table, learned mixing."""
     def __init__(self, bigram_vocab_size: int, bigram_dim: int, model_dim: int):
         super().__init__()
         self.bigram_vocab_size = bigram_vocab_size
@@ -663,22 +663,32 @@ class BigramHashEmbedding(nn.Module):
         if self.proj is not None:
             nn.init.zeros_(self.proj.weight)
         self.scale = nn.Parameter(torch.tensor(0.05, dtype=torch.float32))
-        self.mix_gate = nn.Parameter(torch.tensor(0.7, dtype=torch.float32))  # init biased toward bigram
+        # Learned mixing weights for unigram, bigram, trigram (3 logits -> softmax)
+        self.mix_logits = nn.Parameter(torch.tensor([0.0, 1.0, 0.5], dtype=torch.float32))
 
     def forward(self, token_ids: Tensor) -> Tensor:
         t = token_ids.to(torch.int32)
         mod = self.bigram_vocab_size - 1
-        # Bigram hash (original)
+        # Unigram hash: h(t_i)
+        uni_idx = (49157 * t) % mod
+        # Bigram hash: h(t_{i-1}, t_i)
         bi_idx = torch.empty_like(t)
         bi_idx[..., 0] = mod
         bi_idx[..., 1:] = torch.bitwise_xor(36313 * t[..., 1:], 27191 * t[..., :-1]) % mod
-        # Current-token hash (same table, different hash)
-        curr_idx = (49157 * t) % mod
-        # Adaptive mixing: same table, two views, learned gate
+        # Trigram hash: h(t_{i-2}, t_{i-1}, t_i)
+        tri_idx = torch.empty_like(t)
+        tri_idx[..., :2] = mod
+        tri_idx[..., 2:] = (torch.bitwise_xor(
+            torch.bitwise_xor(52711 * t[..., 2:], 36313 * t[..., 1:-1]),
+            27191 * t[..., :-2]
+        )) % mod
+        # Lookup from same table
+        h_uni = self.embed(uni_idx.long())
         h_bi = self.embed(bi_idx.long())
-        h_curr = self.embed(curr_idx.long())
-        gate = torch.sigmoid(self.mix_gate.to(dtype=h_bi.dtype))
-        h = gate * h_bi + (1.0 - gate) * h_curr
+        h_tri = self.embed(tri_idx.long())
+        # Learned softmax mixing
+        w = torch.softmax(self.mix_logits.to(dtype=h_uni.dtype), dim=0)
+        h = w[0] * h_uni + w[1] * h_bi + w[2] * h_tri
         if self.proj is not None:
             h = self.proj(h)
         return h * self.scale.to(dtype=h.dtype)

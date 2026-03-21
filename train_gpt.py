@@ -663,17 +663,22 @@ class BigramHashEmbedding(nn.Module):
         if self.proj is not None:
             nn.init.zeros_(self.proj.weight)
         self.scale = nn.Parameter(torch.tensor(0.05, dtype=torch.float32))
-
-    def bigram_hash(self, tokens: Tensor) -> Tensor:
-        t = tokens.to(torch.int32)
-        mod = self.bigram_vocab_size - 1
-        out = torch.empty_like(t)
-        out[..., 0] = mod
-        out[..., 1:] = torch.bitwise_xor(36313 * t[..., 1:], 27191 * t[..., :-1]) % mod
-        return out.long()
+        self.mix_gate = nn.Parameter(torch.tensor(0.7, dtype=torch.float32))  # init biased toward bigram
 
     def forward(self, token_ids: Tensor) -> Tensor:
-        h = self.embed(self.bigram_hash(token_ids))
+        t = token_ids.to(torch.int32)
+        mod = self.bigram_vocab_size - 1
+        # Bigram hash (original)
+        bi_idx = torch.empty_like(t)
+        bi_idx[..., 0] = mod
+        bi_idx[..., 1:] = torch.bitwise_xor(36313 * t[..., 1:], 27191 * t[..., :-1]) % mod
+        # Current-token hash (same table, different hash)
+        curr_idx = (49157 * t) % mod
+        # Adaptive mixing: same table, two views, learned gate
+        h_bi = self.embed(bi_idx.long())
+        h_curr = self.embed(curr_idx.long())
+        gate = torch.sigmoid(self.mix_gate.to(dtype=h_bi.dtype))
+        h = gate * h_bi + (1.0 - gate) * h_curr
         if self.proj is not None:
             h = self.proj(h)
         return h * self.scale.to(dtype=h.dtype)

@@ -70,7 +70,7 @@ class Hyperparameters:
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = float(os.environ.get("MLP_MULT", 3.0))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
-    rope_base = float(os.environ.get("ROPE_BASE", 50000.0))
+    rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
 
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -1312,7 +1312,7 @@ def main() -> None:
     with torch.no_grad():
         for name, param in base_model.named_parameters():
             if param.ndim == 2 and param.numel() > 65536:
-                threshold = torch.quantile(param.abs().float().flatten(), 0.145)
+                threshold = torch.quantile(param.abs().float().flatten(), 0.10)
                 mask = param.abs() < threshold
                 param.masked_fill_(mask, 0.0)
 

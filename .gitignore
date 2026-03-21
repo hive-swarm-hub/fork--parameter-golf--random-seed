@@ -12,3 +12,6 @@ logs/
 run_mpk.log
 *.backup
 run.log
+*.log
+*.bak
+train_gpt_*.py

@@ -71,6 +71,7 @@ class Hyperparameters:
     mlp_mult = float(os.environ.get("MLP_MULT", 3.0))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
+    rope_dims = int(os.environ.get("ROPE_DIMS", 16))  # partial RoPE: only first N dims
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
 
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -507,12 +508,13 @@ def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
 
 
 class Rotary(nn.Module):
-    def __init__(self, dim: int, base: float = 10000.0, train_seq_len: int = 1024):
+    def __init__(self, dim: int, base: float = 10000.0, train_seq_len: int = 1024, rope_dims: int = 0):
         super().__init__()
-        self.dim = dim
+        self.rope_dims = rope_dims if rope_dims > 0 else dim
+        self.dim = self.rope_dims
         self.base = base
         self.train_seq_len = train_seq_len
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self._seq_len_cached = 0
         self._cos_cached: Tensor | None = None
@@ -539,14 +541,22 @@ class Rotary(nn.Module):
         return self._cos_cached.to(dtype=dtype), self._sin_cached.to(dtype=dtype)
 
 
-def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor, rope_dims: int = 0) -> Tensor:
+    if rope_dims > 0 and rope_dims < x.size(-1):
+        # Partial RoPE: only apply to first rope_dims dimensions
+        x_rope = x[..., :rope_dims]
+        x_pass = x[..., rope_dims:]
+        half = rope_dims // 2
+        x1, x2 = x_rope[..., :half], x_rope[..., half:]
+        x_rope = torch.cat((x1 * cos + x2 * sin, x1 * (-sin) + x2 * cos), dim=-1)
+        return torch.cat((x_rope, x_pass), dim=-1)
     half = x.size(-1) // 2
     x1, x2 = x[..., :half], x[..., half:]
     return torch.cat((x1 * cos + x2 * sin, x1 * (-sin) + x2 * cos), dim=-1)
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, rope_base: float, qk_gain_init: float, use_xsa: bool = False):
+    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, rope_base: float, qk_gain_init: float, use_xsa: bool = False, rope_dims: int = 0):
         super().__init__()
         if dim % num_heads != 0:
             raise ValueError("model_dim must be divisible by num_heads")
@@ -565,7 +575,8 @@ class CausalSelfAttention(nn.Module):
         self.proj = CastedLinear(dim, dim, bias=False)
         self.proj._zero_init = True
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
-        self.rotary = Rotary(self.head_dim, base=rope_base)
+        self.rope_dims = rope_dims
+        self.rotary = Rotary(self.head_dim, base=rope_base, rope_dims=rope_dims)
 
     def _xsa_efficient(self, y: Tensor, v: Tensor) -> Tensor:
         """Subtract self-value projection via GQA-aware reshape (zero new params)."""
@@ -589,8 +600,8 @@ class CausalSelfAttention(nn.Module):
             # Rotary cos/sin are (1,1,T,D//2), reshape for (B,T,H,D) layout
             cos_fa3 = cos.permute(0, 2, 1, 3)  # (1,T,1,D//2)
             sin_fa3 = sin.permute(0, 2, 1, 3)
-            q = apply_rotary_emb(q, cos_fa3, sin_fa3)
-            k = apply_rotary_emb(k, cos_fa3, sin_fa3)
+            q = apply_rotary_emb(q, cos_fa3, sin_fa3, self.rope_dims)
+            k = apply_rotary_emb(k, cos_fa3, sin_fa3, self.rope_dims)
             q = q * self.q_gain.to(dtype=q.dtype)[None, None, :, None]
             y = flash_attn_3_func(q, k, v, causal=True)
             if self.use_xsa:
@@ -603,8 +614,8 @@ class CausalSelfAttention(nn.Module):
             q = F.rms_norm(q, (q.size(-1),))
             k = F.rms_norm(k, (k.size(-1),))
             cos, sin = self.rotary(seqlen, x.device, q.dtype)
-            q = apply_rotary_emb(q, cos, sin)
-            k = apply_rotary_emb(k, cos, sin)
+            q = apply_rotary_emb(q, cos, sin, self.rope_dims)
+            k = apply_rotary_emb(k, cos, sin, self.rope_dims)
             q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
             y = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=None, is_causal=True,

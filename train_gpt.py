@@ -1312,7 +1312,7 @@ def main() -> None:
     with torch.no_grad():
         for name, param in base_model.named_parameters():
             if param.ndim == 2 and param.numel() > 65536:
-                threshold = torch.quantile(param.abs().float().flatten(), 0.13)
+                threshold = torch.quantile(param.abs().float().flatten(), 0.11)
                 mask = param.abs() < threshold
                 param.masked_fill_(mask, 0.0)
 

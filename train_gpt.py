@@ -101,7 +101,7 @@ class Hyperparameters:
 
     xsa_last_n = int(os.environ.get("XSA_LAST_N", 4))
     ema_enabled = bool(int(os.environ.get("EMA_ENABLED", "1")))
-    ema_decay = float(os.environ.get("EMA_DECAY", 0.995))
+    ema_decay = float(os.environ.get("EMA_DECAY", 0.997))
 
     ttt_enabled = bool(int(os.environ.get("TTT_ENABLED", "0")))
     ttt_lr = float(os.environ.get("TTT_LR", 0.002))

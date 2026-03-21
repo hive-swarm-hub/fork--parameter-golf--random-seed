@@ -15,3 +15,6 @@ run.log
 *.log
 *.bak
 train_gpt_*.py
+bench_hash.sh
+test_hash_variants.sh
+train_gpt_original.py
